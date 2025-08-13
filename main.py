@@ -1,14 +1,10 @@
 from alpine_collector import collect_alpine
-from deb_collector import collect_deb
-from rpm_collector import collect_rpm
 
-def process_file(file_path):
-    # 下载后处理逻辑
-    print(f"[Callback] Processing {file_path}")
 
 if __name__ == "__main__":
-    parallel_mode = True  # 控制是否并发
+    parallel_mode = False
+    parallel_num = 4
+    source_file_save = False
+    alpine_dir = "downloads/alpine"
 
-    collect_alpine(parallel=parallel_mode, callback=process_file)
-    collect_deb(parallel=parallel_mode, callback=process_file)
-    collect_rpm(parallel=parallel_mode, callback=process_file)
+    collect_alpine(output_dir=alpine_dir, parallel=parallel_mode, save=source_file_save,workers=parallel_num)
