@@ -59,7 +59,10 @@ def save_json(data, name):
     with open(name, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
-
+def load_json(file):
+    """加载 JSON 数据"""
+    with open(file, 'r', encoding='utf8') as f:
+        return json.load(f)
 def md5_filelike(fobj):
     """计算文件流的 MD5 值"""
     md5 = hashlib.md5()
