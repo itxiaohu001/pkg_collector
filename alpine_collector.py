@@ -82,15 +82,9 @@ def _process_apk_file(file_path, version, repo, arch, save):
         logger.info(f"[{type_name}] Removing {file_path}")
         os.remove(file_path)
 
-
-def collect_alpine(output_dir="downloads/alpine", parallel=False, save=False, workers=4):
-    # 获取所有版本目录
-    versions = get_links(BASE_URL, r"(v[0-9]+\.[0-9]+|edge|latest-stable)/$", type_name)
-    logger.info(f"[{type_name}] Found versions: {versions}")
+def _get_repos_arches_info(versions,ver_repos_cache_file,repo_arches_cache_file):
     ver_repos = {}
     repo_arches = {}
-    ver_repos_cache_file = os.path.join(output_dir, "ver_repos.json")
-    repo_arches_cache_file = os.path.join(output_dir,"repo_arches.json")
     total = 0
 
     # 尝试加载缓存
@@ -112,17 +106,27 @@ def collect_alpine(output_dir="downloads/alpine", parallel=False, save=False, wo
                 repo_arches[ver + repo] = arches
                 total += len(arches)
     else:
-        for ver,repos in ver_repos.items():
+        for ver, repos in ver_repos.items():
             for repo in repos:
-                for _ in repo_arches[ver+repo]:
+                for _ in repo_arches[ver + repo]:
                     total += 1
         logger.info(f"[{type_name}] Using apk dirs cache")
-    logger.info(f"[{type_name}] Found {total} apk dirs.")
 
-    # 缓存apk dir目录信息
     save_json(ver_repos, ver_repos_cache_file)
     save_json(repo_arches, repo_arches_cache_file)
 
+    return ver_repos,repo_arches,total
+
+def collect_alpine(output_dir="downloads/alpine", parallel=False, save=False, workers=4):
+    # 获取所有版本目录
+    versions = get_links(BASE_URL, r"(v[0-9]+\.[0-9]+|edge|latest-stable)/$", type_name)
+    logger.info(f"[{type_name}] Found versions: {versions}")
+    ver_repos_cache_file = os.path.join(output_dir, "ver_repos.json")
+    repo_arches_cache_file = os.path.join(output_dir,"repo_arches.json")
+
+    # 加载目录缓存，获取目录总数
+    ver_repos,repo_arches,total = _get_repos_arches_info(versions,ver_repos_cache_file,repo_arches_cache_file)
+    logger.info(f"[{type_name}] Found {total} apk dirs.")
     cur = 0
     for ver,repos in ver_repos.items():
         ver_url = urljoin(BASE_URL, ver)
@@ -132,4 +136,5 @@ def collect_alpine(output_dir="downloads/alpine", parallel=False, save=False, wo
                 cur += 1
                 logger.info(f"[{type_name}] Progress {cur}/{total}")
                 arch_url = urljoin(repo_url, arch)
+                # 以arch为单位进行处理
                 _process_arch_dir(arch_url, ver.strip("/"), repo.strip("/"), arch.strip("/"), output_dir, parallel, workers, save)
