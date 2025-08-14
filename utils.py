@@ -6,6 +6,7 @@ import requests
 import lief
 import logging
 from logging.handlers import RotatingFileHandler
+from bs4 import BeautifulSoup
 
 # 创建 Logger
 logger = logging.getLogger("crawl")
@@ -20,26 +21,45 @@ logger.addHandler(handler)
 
 
 def get_links(url, pattern=None, type_name="", timeout=60):
-    """获取目录下所有匹配 pattern 的链接"""
+    """获取 <tbody> 中匹配 pattern 的链接"""
     try:
         r = requests.get(url, timeout=timeout)
         r.raise_for_status()
-        links = re.findall(r'href="([^"]+)"', r.text)
-        if pattern:
-            links = [l for l in links if re.match(pattern, l)]
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # 只找 <tbody> 范围
+        tbody = soup.find("tbody")
+        if not tbody:
+            logger.warning(f"[{type_name}] No <tbody> found in {url}")
+            return []
+
+        anchors = tbody.find_all("a")
+        links = []
+        for a in anchors:
+            href = a.get("href")
+            if not href:
+                continue
+            if pattern:
+                if re.match(pattern, href):
+                    links.append(href)
+            else:
+                links.append(href)
+
         return links
+
     except Exception as e:
         logger.error(f"[{type_name}] Failed to list {url}: {e}")
         return []
 
 
-def download_file(url, output_dir, version, repo, arch, save=False, callback=None, type_name="", timeout=60):
+def download_file(url, output_dir, save=False, callback=None, type_name="", timeout=60, additional=None):
     """下载文件"""
-    file_path = os.path.normpath(os.path.join(output_dir, version, repo, arch, os.path.basename(url)))
+    file_path = os.path.normpath(os.path.join(output_dir, os.path.basename(url)))
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
     if os.path.exists(f'{file_path}.json'):
-        return
+        return ""
 
     try:
         r = requests.get(url, timeout=timeout)
@@ -48,9 +68,16 @@ def download_file(url, output_dir, version, repo, arch, save=False, callback=Non
             f.write(r.content)
         logger.info(f"[{type_name}] Downloaded {url}")
         if callback:
-            callback(file_path, version, repo.strip("/"), arch.strip("/"), save)
+            callback(file_path, additional)
+        if not save:
+            os.remove(file_path)
+            logger.info(f"[{type_name}] Deleted {file_path}")
+        return file_path
     except Exception as e:
         logger.error(f"[{type_name}] Failed {url}: {e}")
+        if not save:
+            os.remove(file_path)
+        return ""
 
 
 def save_json(data, name):
@@ -59,10 +86,13 @@ def save_json(data, name):
     with open(name, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
+
 def load_json(file):
     """加载 JSON 数据"""
     with open(file, 'r', encoding='utf8') as f:
         return json.load(f)
+
+
 def md5_filelike(fobj):
     """计算文件流的 MD5 值"""
     md5 = hashlib.md5()
