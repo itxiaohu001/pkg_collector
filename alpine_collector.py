@@ -24,7 +24,7 @@ def _process_arch_dir(arch_url, version, repo, arch, output_dir, parallel=False,
             futures = [
                 executor.submit(
                     download_file(url=urljoin(arch_url, apk),
-                                  output_dir=os.path.join(output_dir, version, repo, arch), save=save,
+                                  save_dir=os.path.join(output_dir, version, repo, arch), save=save,
                                   callback=_process_apk_file, type_name=type_name, additional=additional)
                 )
                 for apk in apk_files
@@ -33,7 +33,7 @@ def _process_arch_dir(arch_url, version, repo, arch, output_dir, parallel=False,
                 pass
     else:
         for apk in apk_files:
-            download_file(url=urljoin(arch_url, apk), output_dir=os.path.join(output_dir, version, repo, arch),
+            download_file(url=urljoin(arch_url, apk), save_dir=os.path.join(output_dir, version, repo, arch),
                           save=save,
                           callback=_process_apk_file, type_name=type_name, additional=additional)
 
