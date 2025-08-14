@@ -8,18 +8,24 @@ BASE_URL = "https://mirrors.aliyun.com/alpine/"
 FAILED_LIST_FILE = "failed_downloads.txt"
 type_name = 'Alpine'
 
+os_dir_version_key = "os_dir_version"
+os_dir_repo_key = "os_dir_repo"
+os_dir_arch_key = "os_dir_arch"
+
 
 def _process_arch_dir(arch_url, version, repo, arch, output_dir, parallel=False, workers=4, save=False):
     # 获取目录下所有 .apk 文件
     apk_files = get_links(arch_url, r".+\.apk$", type_name)
     logger.info(f"[Alpine] {arch_url} → Found {len(apk_files)} APKs")
+    additional = {os_dir_version_key: version, os_dir_repo_key: repo, os_dir_arch_key: arch}
 
     if parallel:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [
                 executor.submit(
-                    download_file, urljoin(arch_url, apk), output_dir, version, repo, arch, save, _process_apk_file,
-                    type_name
+                    download_file(url=urljoin(arch_url, apk),
+                                  output_dir=os.path.join(output_dir, version, repo, arch), save=save,
+                                  callback=_process_apk_file, type_name=type_name, additional=additional)
                 )
                 for apk in apk_files
             ]
@@ -27,7 +33,9 @@ def _process_arch_dir(arch_url, version, repo, arch, output_dir, parallel=False,
                 pass
     else:
         for apk in apk_files:
-            download_file(urljoin(arch_url, apk), output_dir, version, repo, arch, save, _process_apk_file, type_name)
+            download_file(url=urljoin(arch_url, apk), output_dir=os.path.join(output_dir, version, repo, arch),
+                          save=save,
+                          callback=_process_apk_file, type_name=type_name, additional=additional)
 
 
 def _parse_apk(apk_path):
@@ -72,17 +80,21 @@ def _parse_apk(apk_path):
     return pkginfo
 
 
-def _process_apk_file(file_path, version, repo, arch, save):
+def _process_apk_file(file_path, additional):
+    version = additional[os_dir_version_key]
+    repo = additional[os_dir_repo_key]
+    arch = additional[os_dir_arch_key]
     # 下载后处理逻辑
     logger.info(f"[{type_name}] Processing {version} -> {repo} -> {arch} -> {os.path.basename(file_path)}")
     res = _parse_apk(file_path)
     if res:
+        res[os_dir_version_key] = version
+        res[os_dir_repo_key] = repo
+        res[os_dir_arch_key] = arch
         save_json(res, f'{file_path}.json')
-    if not save:
-        logger.info(f"[{type_name}] Removing {file_path}")
-        os.remove(file_path)
 
-def _get_repos_arches_info(versions,ver_repos_cache_file,repo_arches_cache_file):
+
+def _get_repos_arches_info(versions, ver_repos_cache_file, repo_arches_cache_file):
     ver_repos = {}
     repo_arches = {}
     total = 0
@@ -115,26 +127,28 @@ def _get_repos_arches_info(versions,ver_repos_cache_file,repo_arches_cache_file)
     save_json(ver_repos, ver_repos_cache_file)
     save_json(repo_arches, repo_arches_cache_file)
 
-    return ver_repos,repo_arches,total
+    return ver_repos, repo_arches, total
+
 
 def collect_alpine(output_dir="downloads/alpine", parallel=False, save=False, workers=4):
     # 获取所有版本目录
     versions = get_links(BASE_URL, r"(v[0-9]+\.[0-9]+|edge|latest-stable)/$", type_name)
     logger.info(f"[{type_name}] Found versions: {versions}")
     ver_repos_cache_file = os.path.join(output_dir, "ver_repos.json")
-    repo_arches_cache_file = os.path.join(output_dir,"repo_arches.json")
+    repo_arches_cache_file = os.path.join(output_dir, "repo_arches.json")
 
     # 加载目录缓存，获取目录总数
-    ver_repos,repo_arches,total = _get_repos_arches_info(versions,ver_repos_cache_file,repo_arches_cache_file)
+    ver_repos, repo_arches, total = _get_repos_arches_info(versions, ver_repos_cache_file, repo_arches_cache_file)
     logger.info(f"[{type_name}] Found {total} apk dirs.")
     cur = 0
-    for ver,repos in ver_repos.items():
+    for ver, repos in ver_repos.items():
         ver_url = urljoin(BASE_URL, ver)
         for repo in repos:
             repo_url = urljoin(ver_url, repo)
-            for arch in repo_arches[ver+repo]:
+            for arch in repo_arches[ver + repo]:
                 cur += 1
                 logger.info(f"[{type_name}] Progress {cur}/{total}")
                 arch_url = urljoin(repo_url, arch)
                 # 以arch为单位进行处理
-                _process_arch_dir(arch_url, ver.strip("/"), repo.strip("/"), arch.strip("/"), output_dir, parallel, workers, save)
+                _process_arch_dir(arch_url, ver.strip("/"), repo.strip("/"), arch.strip("/"), output_dir, parallel,
+                                  workers, save)
