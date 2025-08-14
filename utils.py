@@ -53,10 +53,10 @@ def get_links(url, pattern=None, type_name="", timeout=60):
         return []
 
 
-def download_file(url, output_dir, save=False, callback=None, type_name="", timeout=60, additional=None):
+def download_file(url, save_dir, save=False, callback=None, type_name="", timeout=60, additional=None):
     """下载文件"""
-    file_path = os.path.normpath(os.path.join(output_dir, os.path.basename(url)))
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    file_path = os.path.normpath(os.path.join(save_dir, os.path.basename(url)))
+    os.makedirs(save_dir, exist_ok=True)
 
     if os.path.exists(f'{file_path}.json'):
         return ""
