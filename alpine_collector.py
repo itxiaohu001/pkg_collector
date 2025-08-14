@@ -92,7 +92,7 @@ def _get_repos_arches_info(versions,ver_repos_cache_file,repo_arches_cache_file)
         ver_repos = load_json(ver_repos_cache_file)
         repo_arches = load_json(repo_arches_cache_file)
 
-    if len(ver_repos) == 0 and len(repo_arches) == 0:
+    if len(ver_repos) == 0 or len(repo_arches) == 0:
         logger.info(f"[{type_name}] Collecting apk dirs...")
         for ver in versions:
             ver_url = urljoin(BASE_URL, ver)
