@@ -1,5 +1,7 @@
 import os
+import random
 import tarfile
+import time
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import md5_filelike, download_file, get_links, file_hash, save_json, logger, load_json
@@ -13,7 +15,7 @@ os_dir_repo_key = "os_dir_repo"
 os_dir_arch_key = "os_dir_arch"
 
 
-def _process_arch_dir(arch_url, version, repo, arch, output_dir, save=False):
+def _process_arch_dir(arch_url, version, repo, arch, output_dir, save=False, randint=2):
     # 获取目录下所有 .apk 文件
     apk_files = get_links(arch_url, r".+\.apk$", type_name)
     logger.info(f"[Alpine] {arch_url} → Found {len(apk_files)} APKs")
@@ -21,6 +23,8 @@ def _process_arch_dir(arch_url, version, repo, arch, output_dir, save=False):
 
     for apk in apk_files:
         try:
+            delay = random.randint(0, randint)
+            time.sleep(delay)
             download_file(url=urljoin(arch_url, apk), save_dir=os.path.join(output_dir, version, repo, arch),
                           save=save,
                           callback=_process_apk_file, type_name=type_name, additional=additional)
@@ -61,7 +65,7 @@ def _parse_apk(apk_path):
                 md5_val = md5_filelike(f)
                 files.append({
                     "name": member.name,
-                    "size":member.size,
+                    "size": member.size,
                     "md5": md5_val
                 })
 
@@ -121,7 +125,7 @@ def _get_repos_arches_info(versions, ver_repos_cache_file, repo_arches_cache_fil
     return ver_repos, repo_arches, total
 
 
-def collect_alpine(output_dir="downloads/alpine", save=False):
+def collect_alpine(output_dir="downloads/alpine", save=False, randint=2):
     # 获取所有版本目录
     versions = get_links(BASE_URL, r"(v[0-9]+\.[0-9]+|edge|latest-stable)/$", type_name)
     logger.info(f"[{type_name}] Found versions: {versions}")
@@ -141,4 +145,4 @@ def collect_alpine(output_dir="downloads/alpine", save=False):
                 logger.info(f"[{type_name}] Progress {cur}/{total}")
                 arch_url = urljoin(repo_url, arch)
                 # 以arch为单位进行处理
-                _process_arch_dir(arch_url, ver.strip("/"), repo.strip("/"), arch.strip("/"), output_dir, save)
+                _process_arch_dir(arch_url, ver.strip("/"), repo.strip("/"), arch.strip("/"), output_dir, save, randint)

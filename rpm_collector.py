@@ -1,4 +1,6 @@
 import os
+import random
+import time
 from urllib.parse import urljoin
 import rpmfile
 import hashlib
@@ -90,7 +92,7 @@ def search_rpm_urls(url, rpm_urls, type_name):
                 continue
 
 
-def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", timeout=60, save=False):
+def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", timeout=60, save=False, randint=2):
     os.makedirs(output_dir, exist_ok=True)
     url_version = {}
 
@@ -106,10 +108,12 @@ def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", tim
             logger.info(f"[{type_name}] Failed {version_url}: {e}")
 
     cur = 0
-    for url ,version in url_version.items():
+    for url, version in url_version.items():
         try:
             additional = {os_dir_version_key: version}
             logger.info(f"[{type_name}] Processing {url} {cur}/{len(url_version)}")
+            delay = random.randint(0, randint)
+            time.sleep(delay)
             download_file(url, os.path.join(output_dir, version), callback=parse_rpm_basic, type_name=type_name,
                           timeout=timeout, additional=additional, save=save)
         except Exception as e:

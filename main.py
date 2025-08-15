@@ -9,11 +9,12 @@ if __name__ == "__main__":
     debian_dir = "downloads/debian"
     ubuntu_dir = "downloads/ubuntu"
     centos_dir = "downloads/centos"
+    randint = 2  # [0,randint]随机睡眠值（整数）
 
-    collect_alpine(output_dir=alpine_dir, save=source_file_save)
+    collect_alpine(output_dir=alpine_dir, save=source_file_save, randint=randint)
     collect_deb(base_url="https://mirrors.aliyun.com/debian/", output_dir=debian_dir, type_name="Debian",
-                timeout=http_timeout,save=source_file_save)
+                timeout=http_timeout, save=source_file_save, randint=randint)
     collect_deb(base_url="https://mirrors.aliyun.com/ubuntu/", output_dir=debian_dir, type_name="Ubuntu",
-                timeout=http_timeout,save=source_file_save)
-    collect_rpm(output_dir=centos_dir,base_url="https://mirrors.aliyun.com/centos/",  type_name="Centos",
-                timeout=http_timeout,save=source_file_save)
+                timeout=http_timeout, save=source_file_save, randint=randint)
+    collect_rpm(output_dir=centos_dir, base_url="https://mirrors.aliyun.com/centos/", type_name="Centos",
+                timeout=http_timeout, save=source_file_save, randint=randint)

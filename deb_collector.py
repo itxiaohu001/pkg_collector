@@ -3,6 +3,9 @@ import bz2
 import lzma
 import hashlib
 import os
+import random
+import time
+
 from debian import debfile
 from urllib.parse import urljoin
 from utils import get_links, logger, download_file, save_json, load_json, file_hash
@@ -180,7 +183,7 @@ def _parse_deb(file_path, additional):
                 md5 = hashlib.md5(data).hexdigest()
                 results.append({
                     "path": member.name,
-                    "size":member.mode,
+                    "size": member.mode,
                     "md5": md5
                 })
 
@@ -190,7 +193,7 @@ def _parse_deb(file_path, additional):
     save_json(package, file_path + ".json")
 
 
-def collect_deb(base_url, output_dir, type_name, timeout=60, save=False):
+def collect_deb(base_url, output_dir, type_name, timeout=60, save=False, randint=2):
     os.makedirs(output_dir, exist_ok=True)
 
     all_pakages = _get_package_infos(base_url, type_name, output_dir, True)
@@ -212,6 +215,8 @@ def collect_deb(base_url, output_dir, type_name, timeout=60, save=False):
         try:
             # 打印进度
             logger.info(f"[{type_name}] Processing {deb_url} {cur}/{len(all_pakages)}")
+            delay = random.randint(0, randint)
+            time.sleep(delay)
             download_file(deb_url, save_dir, save=save, callback=_parse_deb, type_name=type_name, timeout=timeout)
         except Exception as e:
             logger.error(f"[{type_name}] Failed to process {deb_url}: {e}")
