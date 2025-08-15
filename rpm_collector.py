@@ -1,69 +1,111 @@
 import os
-import gzip
-import xml.etree.ElementTree as ET
-import requests
-from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urljoin
+import rpmfile
+import hashlib
+from utils import save_json, file_hash, get_links, logger, download_file
 
-RPM_MIRROR = "http://mirror.centos.org/centos/8-stream/BaseOS/x86_64/os"
+RPM_KEYS = ['size', 'epoch', 'name', 'version', 'release', 'summary',
+            'description', 'buildtime', 'buildhost', 'distribution', 'vendor', 'copyright', 'packager', 'group',
+            'url', 'os', 'arch', 'sourcerpm', 'provides', 'requirename', 'requireversion', 'requireflags',
+            'conflictflags', 'conflictname', 'conflictversion', 'rpmversion', 'archive_format']
 
-def _download_file(url, output_dir, callback=None):
-    os.makedirs(output_dir, exist_ok=True)
-    file_path = os.path.join(output_dir, os.path.basename(url))
-    try:
-        r = requests.get(url, timeout=60)
-        r.raise_for_status()
-        with open(file_path, "wb") as f:
-            f.write(r.content)
-        print(f"[RPM] Downloaded {url}")
-        if callback:
-            callback(file_path)
-    except Exception as e:
-        print(f"[RPM] Failed {url}: {e}")
+os_dir_version_key = "os_dir_version"
 
-def collect_rpm(output_dir="downloads/rpm", parallel=False, callback=None):
-    os.makedirs(output_dir, exist_ok=True)
-    repomd_url = f"{RPM_MIRROR}/repodata/repomd.xml"
-    print(f"[RPM] Downloading repomd from {repomd_url}...")
-    resp = requests.get(repomd_url, timeout=30)
-    resp.raise_for_status()
 
-    root = ET.fromstring(resp.content)
-    primary_href = None
-    for data in root.findall("{http://createrepo.baseurl.org/metadata/repo}data"):
-        if data.attrib.get("type") == "primary":
-            location = data.find("{http://createrepo.baseurl.org/metadata/repo}location")
-            primary_href = location.attrib["href"]
-            break
+def safe_bytes(val):
+    if isinstance(val, bytes):
+        # 尝试解码，如果不是文本就转 hex
+        try:
+            return val.decode(errors='ignore')
+        except Exception:
+            return val.hex()
+    return val
 
-    if not primary_href:
-        print("[RPM] No primary metadata found!")
-        return
 
-    primary_url = f"{RPM_MIRROR}/{primary_href}"
-    print(f"[RPM] Downloading primary data from {primary_url}...")
-    r = requests.get(primary_url, timeout=30)
-    r.raise_for_status()
+def parse_rpm_basic(rpm_path, additional):
+    os_version = ""
+    if additional:
+        os_version = additional[os_dir_version_key]
 
-    pkg_list = []
-    with gzip.open(BytesIO(r.content), "rt", encoding="utf-8") as f:
-        tree = ET.parse(f)
-        root = tree.getroot()
-        for pkg in root.findall("{http://linux.duke.edu/metadata/common}package"):
-            location = pkg.find("{http://linux.duke.edu/metadata/common}location")
-            href = location.attrib["href"]
-            pkg_list.append(href)
+    result = {
+        os_dir_version_key: os_version,
+        "source_hash": file_hash(rpm_path),
+        "files": []
+    }
 
-    print(f"[RPM] Found {len(pkg_list)} packages.")
+    with rpmfile.open(rpm_path) as rpm:
+        hdr = rpm.headers
 
-    if parallel:
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [
-                executor.submit(_download_file, f"{RPM_MIRROR}/{path}", output_dir, callback)
-                for path in pkg_list
-            ]
-            for _ in as_completed(futures):
+        # 遍历 key 列表
+        for key in RPM_KEYS:
+            val = hdr.get(key)
+            if val is not None:
+                if isinstance(val, list):
+                    val = [safe_bytes(v) for v in val]
+                else:
+                    val = safe_bytes(val)
+                result[key] = val
+
+        # 文件列表
+        for member in rpm.getmembers():
+            full_path = member.name
+            size = member.size
+            if size == 0:
+                continue
+
+            md5 = None
+            try:
+                # 提取文件内容
+                fobj = rpm.extractfile(member.name)
+                if fobj:
+                    data = fobj.read()
+                    md5 = hashlib.md5(data).hexdigest()  # 标准 32 字符 MD5
+            except KeyError:
+                # 有些成员可能无法提取
                 pass
-    else:
-        for path in pkg_list:
-            _download_file(f"{RPM_MIRROR}/{path}", output_dir, callback)
+
+            result["files"].append({
+                "path": full_path,
+                "size": size,
+                "md5": md5
+            })
+
+        save_json(result, rpm_path + ".json")
+
+
+def search_rpm_urls(url, rpm_urls, type_name):
+    logger.info(f"[{type_name}] Searching rpm from {url}...")
+    subs = get_links(url, pattern=r'^(?!\.\.).*\/$|.*\.rpm$')
+    for sub in subs:
+        sub_url = urljoin(url, sub)
+        if not sub:
+            continue
+        if sub.endswith(".rpm"):
+            rpm_urls.append(sub_url)
+        elif sub.endswith("/"):
+            try:
+                search_rpm_urls(sub_url, rpm_urls, type_name)
+            except Exception as e:
+                logger.info(f"[{type_name}] Failed {sub}: {e}")
+                continue
+
+
+def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", timeout=60, save=False):
+    os.makedirs(output_dir, exist_ok=True)
+
+    versions = get_links(base_url, pattern=r'^\d.*\/$')
+    for version in versions:
+        version_url = urljoin(base_url, version)
+        additional = {os_dir_version_key: version}
+        try:
+            rpm_urls = []
+            search_rpm_urls(version_url, rpm_urls, type_name)
+            for rpm_url in rpm_urls:
+                try:
+                    download_file(rpm_url, os.path.join(output_dir,version), callback=parse_rpm_basic, type_name=type_name,
+                                  timeout=timeout, additional=additional, save=save)
+                except Exception as e:
+                    logger.error(f"[{type_name}] Failed {rpm_url}: {e}")
+
+        except Exception as e:
+            logger.info(f"[{type_name}] Failed {version_url}: {e}")

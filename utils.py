@@ -59,6 +59,7 @@ def download_file(url, save_dir, save=False, callback=None, type_name="", timeou
     os.makedirs(save_dir, exist_ok=True)
 
     if os.path.exists(f'{file_path}.json'):
+        logger.info(f"[{type_name}] Skipped {url} (cached)")
         return ""
 
     try:
