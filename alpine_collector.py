@@ -3,7 +3,6 @@ import random
 import tarfile
 import time
 from urllib.parse import urljoin
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import md5_filelike, download_file, get_links, file_hash, save_json, logger, load_json
 
 BASE_URL = "https://mirrors.aliyun.com/alpine/"
