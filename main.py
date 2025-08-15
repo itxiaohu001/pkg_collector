@@ -5,23 +5,40 @@ import argparse
 import os
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Package collector')
-    parser.add_argument('--source-file-save', action='store_true', default=False, help='Save source files')
-    parser.add_argument('--http-timeout', type=int, default=60, help='HTTP request timeout')
-    parser.add_argument('--randint', type=int, default=2, help='Random sleep value')
-    parser.add_argument('--download-dir', type=str, default='downloads', help='Top level download directory')
-    parser.add_argument('--collect-types', nargs='+', default=['alpine', 'debian', 'ubuntu', 'centos'],
-                        choices=['alpine', 'debian', 'ubuntu', 'centos'],
-                        help='Types of packages to collect: alpine, debian, ubuntu, centos')
+    """
+    Package collector - 用于收集各种Linux发行版的软件包信息
+    
+    简单使用示例:
+    python main.py --types all                    # 收集所有类型
+    python main.py --types alpine,debian          # 只收集alpine和debian
+    python main.py --dir mydownloads --timeout 120 # 指定下载目录和超时时间
+    """
+    parser = argparse.ArgumentParser(description='Package collector - 用于收集各种Linux发行版的软件包信息')
+    parser.add_argument('--save', action='store_true', default=False,
+                        help='是否保存源文件 (默认: False)')
+    parser.add_argument('--timeout', type=int, default=60,
+                        help='HTTP请求超时时间秒数 (默认: 60)')
+    parser.add_argument('--rand', type=int, default=2,
+                        help='最大随机延迟秒数 (默认: 2)')
+    parser.add_argument('--dir', type=str, default='downloads',
+                        help='下载根目录 (默认: downloads)')
+    parser.add_argument('--types', type=str, default='all',
+                        help='要收集的类型，用逗号分隔或使用all (默认: all)')
 
     args = parser.parse_args()
-    source_file_save = args.source_file_save
-    http_timeout = args.http_timeout
-    randint = args.randint  # [0,randint]随机睡眠值（整数）
-    download_dir = args.download_dir
-    collect_types = [t.lower() for t in args.collect_types]
+    source_file_save = args.save
+    http_timeout = args.timeout
+    randint = args.rand
+    download_dir = args.dir
+    collect_types_str = args.types.lower()
 
-    # 创建顶级下载目录
+    # 解析收集类型
+    if collect_types_str == 'all':
+        collect_types = ['alpine', 'debian', 'ubuntu', 'centos']
+    else:
+        collect_types = [t.strip() for t in collect_types_str.split(',')]
+
+    # 创建下载目录
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
 
@@ -54,4 +71,3 @@ if __name__ == "__main__":
             os.makedirs(centos_dir)
         collect_rpm(output_dir=centos_dir, base_url="https://mirrors.aliyun.com/centos/", type_name="Centos",
                     timeout=http_timeout, save=source_file_save, randint=randint)
-
