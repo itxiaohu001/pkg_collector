@@ -1,0 +1,11 @@
+# Package collector requirements
+
+requests>=2.25.0
+lief>=0.12.0
+beautifulsoup4>=4.9.0
+python-debian>=0.1.36
+rpmfile>=1.0.0
+
+# Standard libraries included (no need to install separately):
+# argparse, hashlib, json, logging, os, random, re, tarfile, time
+# gzip, bz2, lzma (compression libraries)
