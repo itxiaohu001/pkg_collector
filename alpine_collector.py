@@ -61,6 +61,7 @@ def _parse_apk(apk_path):
                 md5_val = md5_filelike(f)
                 files.append({
                     "name": member.name,
+                    "size":member.size,
                     "md5": md5_val
                 })
 

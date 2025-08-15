@@ -180,6 +180,7 @@ def _parse_deb(file_path, additional):
                 md5 = hashlib.md5(data).hexdigest()
                 results.append({
                     "path": member.name,
+                    "size":member.mode,
                     "md5": md5
                 })
 
