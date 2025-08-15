@@ -92,7 +92,8 @@ def search_rpm_urls(url, rpm_urls, type_name):
                 continue
 
 
-def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", timeout=60, save=False, randint=2):
+def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", timeout=60, save=False, randint=2,
+                cache=True):
     os.makedirs(output_dir, exist_ok=True)
     url_version = {}
 
@@ -115,6 +116,6 @@ def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", tim
             delay = random.randint(0, randint)
             time.sleep(delay)
             download_file(url, os.path.join(output_dir, version), callback=parse_rpm_basic, type_name=type_name,
-                          timeout=timeout, additional=additional, save=save)
+                          timeout=timeout, additional=additional, save=save, cache=cache)
         except Exception as e:
             logger.error(f"[{type_name}] Failed {url}: {e}")

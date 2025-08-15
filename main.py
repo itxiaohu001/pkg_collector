@@ -24,6 +24,8 @@ if __name__ == "__main__":
                         help='下载根目录 (默认: downloads)')
     parser.add_argument('--types', type=str, default='all',
                         help='要收集的类型，用逗号分隔或使用all (默认: all)')
+    parser.add_argument('--cache', action='store_true', default=True,
+                        help='是否使用缓存 (默认: True)')
 
     args = parser.parse_args()
     source_file_save = args.save
@@ -31,6 +33,7 @@ if __name__ == "__main__":
     randint = args.rand
     download_dir = args.dir
     collect_types_str = args.types.lower()
+    cache = args.cache
 
     # 解析收集类型
     if collect_types_str == 'all':
@@ -52,22 +55,22 @@ if __name__ == "__main__":
     if 'alpine' in collect_types:
         if not os.path.exists(alpine_dir):
             os.makedirs(alpine_dir)
-        collect_alpine(output_dir=alpine_dir, save=source_file_save, randint=randint)
+        collect_alpine(output_dir=alpine_dir, save=source_file_save, randint=randint, cache=cache)
 
     if 'debian' in collect_types:
         if not os.path.exists(debian_dir):
             os.makedirs(debian_dir)
-        collect_deb(base_url="https://mirrors.aliyun.com/debian/", output_dir=debian_dir, type_name="Debian",
-                    timeout=http_timeout, save=source_file_save, randint=randint)
+        collect_deb(base_url="https://mirrors.aliyun.com/debian/", out_dir=debian_dir, type_name="Debian",
+                    timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
 
     if 'ubuntu' in collect_types:
         if not os.path.exists(ubuntu_dir):
             os.makedirs(ubuntu_dir)
-        collect_deb(base_url="https://mirrors.aliyun.com/ubuntu/", output_dir=ubuntu_dir, type_name="Ubuntu",
-                    timeout=http_timeout, save=source_file_save, randint=randint)
+        collect_deb(base_url="https://mirrors.aliyun.com/ubuntu/", out_dir=ubuntu_dir, type_name="Ubuntu",
+                    timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
 
     if 'centos' in collect_types:
         if not os.path.exists(centos_dir):
             os.makedirs(centos_dir)
         collect_rpm(output_dir=centos_dir, base_url="https://mirrors.aliyun.com/centos/", type_name="Centos",
-                    timeout=http_timeout, save=source_file_save, randint=randint)
+                    timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)

@@ -99,6 +99,7 @@ class FileDownloadError(Exception):
 def download_file(
         url,
         save_dir="./",
+        cache=True,
         save=False,
         callback=None,
         type_name="",
@@ -112,7 +113,7 @@ def download_file(
     last_error = None
 
     # 检查缓存
-    if os.path.exists(f'{file_path}.json'):
+    if os.path.exists(f'{file_path}.json') and cache:
         logger.info(f"[{type_name}] Skipped {url} (cached)")
         return ""
 
