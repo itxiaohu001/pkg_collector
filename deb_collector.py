@@ -1,10 +1,11 @@
-import os
 import gzip
 import bz2
 import lzma
+import hashlib
+import os
+from debian import debfile
 from urllib.parse import urljoin
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from utils import get_links, logger, download_file, download_file, save_json, load_json
+from utils import get_links, logger, download_file, save_json, load_json, file_hash
 
 os_dir_version_key = "os_dir_version"
 os_dir_repo_key = "os_dir_repo"
@@ -19,34 +20,42 @@ def _get_package_infos(base_url, type_name, out_dir, cache):
     cur = 0
 
     # 获取所有的Packages的url
-    try:
-        dists_url = urljoin(base_url, "dists/")
-        versions = get_links(url=dists_url, pattern=r'^(?!\.\.).*\/$')
-        packages_json_cache = os.path.join(out_dir, "packages_urls.json")
-        if cache and os.path.exists(packages_json_cache):
-            url_info = load_json(packages_json_cache)
-        else:
-            for version in versions:
-                repo_url = urljoin(dists_url, version)
+    dists_url = urljoin(base_url, "dists/")
+    versions = get_links(url=dists_url, pattern=r'^(?!\.\.).*\/$')
+    packages_json_cache = os.path.join(out_dir, "packages_urls.json")
+    if cache and os.path.exists(packages_json_cache):
+        url_info = load_json(packages_json_cache)
+    else:
+        for version in versions:
+            repo_url = urljoin(dists_url, version)
+            try:
                 repos = get_links(url=repo_url, pattern=r'^(?!\.\.).*\/$')
-                for repo in repos:
-                    arch_url = urljoin(repo_url, repo)
+            except Exception as e:
+                logger.warn(f"[{type_name}] Failed to get dists info from {repo_url}: {e}")
+                continue
+            for repo in repos:
+                arch_url = urljoin(repo_url, repo)
+                try:
                     arches = get_links(url=arch_url, pattern=r'^binary-.*\/$')
-                    for arch in arches:
-                        packages_url = urljoin(arch_url, arch)
+                except Exception as e:
+                    logger.warn(f"[{type_name}] Failed to get dists info from {arch_url}: {e}")
+                    continue
+                for arch in arches:
+                    packages_url = urljoin(arch_url, arch)
+                    try:
                         packages = get_links(packages_url, pattern=r'^Packages(?!.*/$).*$')
-                        if len(packages) > 0:
-                            # 存在多种格式的Packages压缩包的话只需要任选一个
-                            package_url = urljoin(packages_url, packages[0])
-                            url_info[package_url] = {}
-                            url_info[package_url][os_dir_version_key] = version
-                            url_info[package_url][os_dir_repo_key] = repo
-                            url_info[package_url][os_dir_arch_key] = arch
-        save_json(url_info, packages_json_cache)
-        logger.info(f"[{type_name}] Found {len(url_info)} packages urls")
-    except Exception as e:
-        logger.error(f"[{type_name}] Failed to get packages url: {e}")
-        return []
+                    except Exception as e:
+                        logger.warn(f"[{type_name}] Failed to get dists info from {packages_url}: {e}")
+                        continue
+                    if len(packages) > 0:
+                        # 存在多种格式的Packages压缩包的话只需要任选一个
+                        package_url = urljoin(packages_url, packages[0])
+                        url_info[package_url] = {}
+                        url_info[package_url][os_dir_version_key] = version
+                        url_info[package_url][os_dir_repo_key] = repo
+                        url_info[package_url][os_dir_arch_key] = arch
+    save_json(url_info, packages_json_cache)
+    logger.info(f"[{type_name}] Found {len(url_info)} packages urls")
 
     # 依次下载Packages并解析
     for index_packages_url, info in url_info.items():
@@ -76,8 +85,8 @@ def _get_package_infos(base_url, type_name, out_dir, cache):
             else:
                 logger.warn(f"[{type_name}] No packages found in {index_packages_url}")
         except Exception as e:
-            logger.error(f"[{type_name}] Failed to process packages file: {e}")
-            return []
+            logger.error(f"[{type_name}] Failed to process packages file {index_packages_url}: {e}")
+            continue
 
     return res
 
@@ -143,46 +152,62 @@ def parse_packages_file(content, version, repo, arch):
     return packages
 
 
-def collect_deb(base_url, output_dir, type_name, parallel=False,  timeout=60):
+def _parse_deb(file_path, additional):
+    if not additional:
+        return
+
+    package = additional["package"]
+    if not package or not file_path:
+        return
+
+    source_name = os.path.basename(file_path)
+    source_hash = file_hash(file_path)
+    package["source_name"] = source_name
+    package["source_hash"] = source_hash
+
+    results = []
+    # 打开 deb 文件
+    deb = debfile.DebFile(file_path)
+
+    # data.tgz() 返回 TarFile 对象（不管是 gz、xz、bz2 都会解压）
+    tar = deb.data.tgz()
+
+    for member in tar.getmembers():
+        if member.isfile():
+            fobj = tar.extractfile(member)
+            if fobj:
+                data = fobj.read()
+                md5 = hashlib.md5(data).hexdigest()
+                results.append({
+                    "path": member.name,
+                    "md5": md5
+                })
+
+    if len(results) > 0:
+        package["files"] = results
+
+    save_json(package, file_path + ".json")
+
+
+def collect_deb(base_url, output_dir, type_name, timeout=60, save=False):
     os.makedirs(output_dir, exist_ok=True)
 
     all_pakages = _get_package_infos(base_url, type_name, output_dir, True)
     logger.info(f"[{type_name}] Found {len(all_pakages)} packages")
 
-    if parallel:
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = []
-            for package in all_pakages:
-                deb_rel_path = package[packages_rel_path_key]
-                version = package[os_dir_version_key]
-                repo = package[os_dir_repo_key]
-                arch = package[os_dir_arch_key]
-                if not version or not repo or not arch or not deb_rel_path:
-                    logger.warn(f"[{type_name}] Invalid package info: {package}")
-                    continue
-                deb_url = urljoin(base_url, deb_rel_path)
-                save_dir = os.path.join(output_dir, version, repo, arch)
-                future = executor.submit(
-                    download_file,
-                    deb_url,
-                    save_dir,
-                    save=False,
-                    callback=None,
-                    type_name=type_name,
-                    timeout=60,
-                )
-                futures.append(future)
-            for _ in as_completed(futures):
-                pass
-    else:
-        for package in all_pakages:
-            deb_rel_path = package[packages_rel_path_key]
-            version = package[os_dir_version_key]
-            repo = package[os_dir_repo_key]
-            arch = package[os_dir_arch_key]
-            if not version or not repo or not arch or not deb_rel_path:
-                logger.warn(f"[{type_name}] Invalid package info: {package}")
-                continue
-            deb_url = urljoin(base_url, deb_rel_path)
-            save_dir = os.path.join(output_dir, version, repo, arch)
-            download_file(deb_url, save_dir, save=False, callback=None, type_name=type_name, timeout=60)
+    for package in all_pakages:
+        if not package:
+            continue
+        deb_rel_path = package[packages_rel_path_key]
+        version = package[os_dir_version_key]
+        repo = package[os_dir_repo_key]
+        arch = package[os_dir_arch_key]
+        if not version or not repo or not arch or not deb_rel_path:
+            logger.warn(f"[{type_name}] Invalid package info: {package}")
+            continue
+        deb_url = urljoin(base_url, deb_rel_path)
+        save_dir = os.path.join(output_dir, version, repo, arch)
+        try:
+            download_file(deb_url, save_dir, save=save, callback=_parse_deb, type_name=type_name, timeout=timeout)
+        except Exception as e:
+            logger.error(f"[{type_name}] Failed to process {deb_url}: {e}")
