@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import requests
 import lief
 import logging
@@ -20,65 +21,146 @@ handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)
 logger.addHandler(handler)
 
 
-def get_links(url, pattern=None, type_name="", timeout=60):
-    """获取 <tbody> 中匹配 pattern 的链接"""
-    try:
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
+class LinkFetchError(Exception):
+    """自定义异常，包含重试信息和原始错误"""
 
-        soup = BeautifulSoup(r.text, "html.parser")
+    def __init__(self, url: str, retries: int, original_error: Exception):
+        self.url = url
+        self.retries = retries
+        self.original_error = original_error
+        super().__init__(
+            f"Failed to fetch links from {url} after {retries} retries. Original error: {str(original_error)}")
 
-        # 只找 <tbody> 范围
-        tbody = soup.find("tbody")
-        if not tbody:
-            logger.warning(f"[{type_name}] No <tbody> found in {url}")
-            return []
 
-        anchors = tbody.find_all("a")
-        links = []
-        for a in anchors:
-            href = a.get("href")
-            if not href:
-                continue
-            if pattern:
-                if re.match(pattern, href):
+def get_links(
+        url,
+        pattern=None,
+        type_name="",
+        timeout=60,
+        max_retries=3,
+        retry_delay=5.0
+):
+    last_error = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 1. 发送HTTP请求
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()  # 自动处理4xx/5xx错误
+
+            # 2. 解析HTML
+            soup = BeautifulSoup(r.text, "html.parser")
+            tbody = soup.find("tbody")
+
+            if not tbody:
+                logger.warning(f"[{type_name}] No <tbody> found in {url}")
+                return []
+
+            # 3. 提取匹配的链接
+            anchors = tbody.find_all("a")
+            links = []
+            for a in anchors:
+                href = a.get("href")
+                if href and (not pattern or re.match(pattern, href)):
                     links.append(href)
-            else:
-                links.append(href)
 
-        return links
+            return links
 
-    except Exception as e:
-        logger.error(f"[{type_name}] Failed to list {url}: {e}")
-        return []
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            logger.warning(
+                f"[{type_name}] Attempt {attempt}/{max_retries} failed for {url}: {str(e)}"
+            )
+            if attempt < max_retries:
+                time.sleep(retry_delay * attempt)  # 指数退避
+        except Exception as e:
+            last_error = e
+            logger.error(f"[{type_name}] Unexpected error processing {url}: {str(e)}")
+            break  # 非网络错误立即终止
+
+    # 重试全部失败后抛出自定义异常
+    raise LinkFetchError(url, max_retries, last_error)
 
 
-def download_file(url, save_dir, save=False, callback=None, type_name="", timeout=60, additional=None):
-    """下载文件"""
+class FileDownloadError(Exception):
+    """自定义下载异常，包含重试信息和上下文"""
+
+    def __init__(self, url: str, retries: int, error: Exception, file_path: str = ""):
+        self.url = url
+        self.retries = retries
+        self.original_error = error
+        self.file_path = file_path
+        super().__init__(
+            f"Failed to download {url} after {retries} retries. "
+            f"Path: {file_path}, Error: {str(error)}"
+        )
+
+
+def download_file(
+        url,
+        save_dir="./",
+        save=False,
+        callback=None,
+        type_name="",
+        timeout=60,
+        additional=None,
+        max_retries: int = 3,
+        retry_delay: float = 5.0,
+):
     file_path = os.path.normpath(os.path.join(save_dir, os.path.basename(url)))
     os.makedirs(save_dir, exist_ok=True)
+    last_error = None
 
+    # 检查缓存
     if os.path.exists(f'{file_path}.json'):
         logger.info(f"[{type_name}] Skipped {url} (cached)")
         return ""
 
-    try:
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
-        with open(file_path, "wb") as f:
-            f.write(r.content)
-        logger.info(f"[{type_name}] Downloaded {url}")
-        if callback:
-            callback(file_path, additional)
-        if not save:
-            os.remove(file_path)
-            logger.info(f"[{type_name}] Deleted {file_path}")
-        return file_path
-    except Exception as e:
-        logger.error(f"[{type_name}] Failed {url}: {e}")
-        if not save:
-            os.remove(file_path)
-        return ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 发送请求（禁用SSL验证需谨慎）
+            r = requests.get(
+                url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+            r.raise_for_status()  # 检查HTTP状态码
+
+            # 保存文件
+            with open(file_path, "wb") as f:
+                f.write(r.content)
+            logger.info(f"[{type_name}] Downloaded {url}")
+
+            # 回调处理
+            if callback:
+                callback(file_path, additional)
+
+            # 非保存模式删除文件
+            if not save:
+                os.remove(file_path)
+                logger.info(f"[{type_name}] Deleted {file_path}")
+
+            return file_path
+
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            logger.warning(
+                f"[{type_name}] Attempt {attempt}/{max_retries} failed for {url}: {str(e)}"
+            )
+            if attempt < max_retries:
+                time.sleep(retry_delay * attempt)  # 指数退避
+        except Exception as e:
+            last_error = e
+            logger.error(f"[{type_name}] Unexpected error downloading {url}: {str(e)}")
+            break  # 非网络错误立即终止
+
+        finally:
+            # 失败时清理临时文件
+            if last_error and os.path.exists(file_path):
+                os.remove(file_path)
+
+    # 重试全部失败后抛出自定义异常
+    raise FileDownloadError(url, max_retries, last_error, file_path)
 
 
 def save_json(data, name):
@@ -114,3 +196,6 @@ def file_hash(path, algo="md5"):
 def is_elf(file_path):
     """判断文件是否为 ELF 文件"""
     return lief.is_elf(file_path)
+
+
+print(get_links("https://mirrors.aliyun.com/redhat/linux/"))
