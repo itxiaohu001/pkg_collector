@@ -196,6 +196,3 @@ def file_hash(path, algo="md5"):
 def is_elf(file_path):
     """判断文件是否为 ELF 文件"""
     return lief.is_elf(file_path)
-
-
-print(get_links("https://mirrors.aliyun.com/redhat/linux/"))
