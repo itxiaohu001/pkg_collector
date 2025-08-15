@@ -92,20 +92,25 @@ def search_rpm_urls(url, rpm_urls, type_name):
 
 def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", timeout=60, save=False):
     os.makedirs(output_dir, exist_ok=True)
+    url_version = {}
 
     versions = get_links(base_url, pattern=r'^\d.*\/$')
     for version in versions:
         version_url = urljoin(base_url, version)
-        additional = {os_dir_version_key: version}
         try:
             rpm_urls = []
             search_rpm_urls(version_url, rpm_urls, type_name)
             for rpm_url in rpm_urls:
-                try:
-                    download_file(rpm_url, os.path.join(output_dir,version), callback=parse_rpm_basic, type_name=type_name,
-                                  timeout=timeout, additional=additional, save=save)
-                except Exception as e:
-                    logger.error(f"[{type_name}] Failed {rpm_url}: {e}")
-
+                url_version[rpm_url] = version
         except Exception as e:
             logger.info(f"[{type_name}] Failed {version_url}: {e}")
+
+    cur = 0
+    for url ,version in url_version.items():
+        try:
+            additional = {os_dir_version_key: version}
+            logger.info(f"[{type_name}] Processing {url} {cur}/{len(url_version)}")
+            download_file(url, os.path.join(output_dir, version), callback=parse_rpm_basic, type_name=type_name,
+                          timeout=timeout, additional=additional, save=save)
+        except Exception as e:
+            logger.error(f"[{type_name}] Failed {url}: {e}")

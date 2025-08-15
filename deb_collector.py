@@ -196,6 +196,7 @@ def collect_deb(base_url, output_dir, type_name, timeout=60, save=False):
     all_pakages = _get_package_infos(base_url, type_name, output_dir, True)
     logger.info(f"[{type_name}] Found {len(all_pakages)} packages")
 
+    cur = 0
     for package in all_pakages:
         if not package:
             continue
@@ -209,6 +210,8 @@ def collect_deb(base_url, output_dir, type_name, timeout=60, save=False):
         deb_url = urljoin(base_url, deb_rel_path)
         save_dir = os.path.join(output_dir, version, repo, arch)
         try:
+            # 打印进度
+            logger.info(f"[{type_name}] Processing {deb_url} {cur}/{len(all_pakages)}")
             download_file(deb_url, save_dir, save=save, callback=_parse_deb, type_name=type_name, timeout=timeout)
         except Exception as e:
             logger.error(f"[{type_name}] Failed to process {deb_url}: {e}")
