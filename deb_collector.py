@@ -82,7 +82,7 @@ def _parse_deb(file_path, additional):
     if not additional:
         return
 
-    package = additional["package"]
+    package = additional.get("package")
     if not package or not file_path:
         return
 
@@ -188,7 +188,7 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
                     if not package:
                         continue
                     additional = {"package":package}
-                    deb_rel_path = package[packages_rel_path_key]
+                    deb_rel_path = package.get(packages_rel_path_key)
                     if not version or not repo or not arch or not deb_rel_path:
                         logger.warn(f"[{type_name}] Invalid package info: {package}")
                         continue
