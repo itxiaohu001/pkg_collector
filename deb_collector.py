@@ -83,8 +83,11 @@ def _parse_deb(file_path, additional):
         return
 
     package = additional.get("package")
-    if not package or not file_path:
-        return
+    if not package:
+        raise ValueError(f"Invalid package {file_path}")
+
+    if not os.path.exists(file_path):
+        raise ValueError(f"File {file_path} not exists")
 
     source_name = os.path.basename(file_path)
     source_hash = file_hash(file_path)
@@ -112,9 +115,9 @@ def _parse_deb(file_path, additional):
 
     if len(results) > 0:
         package["files"] = results
-
-    save_json(package, file_path + ".json")
-
+        save_json(package, file_path + ".json")
+    else:
+        raise ValueError(f"No files found in {file_path}")
 
 def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2, cache=True):
     os.makedirs(out_dir, exist_ok=True)
@@ -181,7 +184,7 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
                 save_path = os.path.join(save_dir, os.path.basename(index_packages_url))
                 download_file(url=index_packages_url, save=True,
                                           save_path=save_path,
-                                          type_name=type_name, timeout=60)
+                                          type_name=type_name, timeout=timeout)
                 if os.path.exists(save_path):
                     pkg_list = load_and_parse_packages(save_path, version, repo, arch)
                     if len(pkg_list) > 0:
@@ -199,7 +202,8 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
                 save_dir = os.path.normpath(os.path.join(out_dir, version, repo, arch))
                 os.makedirs(save_dir, exist_ok=True)
                 save_path = os.path.join(save_dir, os.path.basename(deb_url))
-                if cache and os.path.exists(save_path):
+                if cache and os.path.exists(save_path+".json"):
+                    logger.info(f"[{type_name}] Skipping {deb_url}")
                     continue
                 delay = random.randint(0, randint)
                 time.sleep(delay)

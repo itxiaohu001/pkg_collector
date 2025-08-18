@@ -113,7 +113,8 @@ def collect_rpm(output_dir="downloads/rpm", base_url="", type_name="Centos", tim
         save_dir = os.path.normpath(os.path.join(output_dir, version))
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, os.path.basename(url))
-        if cache and os.path.exists(save_path):
+        if cache and os.path.exists(save_path+".json"):
+            logger.info(f"[{type_name}] Skipping {url}")
             continue
         delay = random.randint(0, randint)
         time.sleep(delay)

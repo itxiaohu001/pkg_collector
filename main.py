@@ -52,10 +52,10 @@ if __name__ == "__main__":
     centos_dir = os.path.join(download_dir, "centos")
 
     # 根据指定的类型进行爬取
-    if 'alpine' in collect_types:
-        if not os.path.exists(alpine_dir):
-            os.makedirs(alpine_dir)
-        collect_alpine(output_dir=alpine_dir, save=source_file_save, randint=randint, cache=cache)
+    # if 'alpine' in collect_types:
+    #     if not os.path.exists(alpine_dir):
+    #         os.makedirs(alpine_dir)
+    #     collect_alpine(output_dir=alpine_dir, save=source_file_save, randint=randint, cache=cache)
 
     if 'debian' in collect_types:
         if not os.path.exists(debian_dir):

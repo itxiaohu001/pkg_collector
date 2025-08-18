@@ -25,7 +25,8 @@ def _process_arch_dir(arch_url, version, repo, arch, output_dir, save=False, ran
         save_dir = os.path.normpath(os.path.join(output_dir, version, repo, arch))
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, apk)
-        if cache and os.path.exists(save_path):
+        if cache and os.path.exists(save_path+".json"):
+            logger.info(f"[{type_name}] Skipping {url}")
             continue
         delay = random.randint(0, randint)
         time.sleep(delay)

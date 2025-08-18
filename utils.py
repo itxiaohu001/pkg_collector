@@ -107,6 +107,7 @@ def download_file(
         max_retries: int = 3,
         retry_delay: float = 5.0,
 ):
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     last_error = None
 
     for attempt in range(1, max_retries + 1):
@@ -122,7 +123,11 @@ def download_file(
             # 保存文件
             with open(save_path, "wb") as f:
                 f.write(r.content)
-            logger.info(f"[{type_name}] Downloaded {url}")
+            if os.path.exists(save_path):
+                logger.info(f"[{type_name}] Downloaded {url}")
+            else:
+                logger.error(f"[{type_name}] Failed to save {url}")
+                return None
 
             # 回调处理
             if callback:
