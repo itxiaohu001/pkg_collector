@@ -43,7 +43,11 @@ def load_and_parse_packages(path, version, repo, arch):
             content = f.read()
 
     # 2. 解析逻辑（自动合并跨行字段）
-    return parse_packages_file(content, version, repo, arch)
+    try:
+        res = parse_packages_file(content, version, repo, arch)
+        return res
+    except Exception as e:
+        raise ValueError(f"Failed to parse packages file {path}: {e}")
 
 
 def parse_packages_file(content, version, repo, arch):
@@ -95,29 +99,34 @@ def _parse_deb(file_path, additional):
     package["source_hash"] = source_hash
 
     results = []
-    # 打开 deb 文件
-    deb = debfile.DebFile(file_path)
 
-    # data.tgz() 返回 TarFile 对象（不管是 gz、xz、bz2 都会解压）
-    tar = deb.data.tgz()
+    try:
+        # 打开 deb 文件
+        deb = debfile.DebFile(file_path)
 
-    for member in tar.getmembers():
-        if member.isfile():
-            fobj = tar.extractfile(member)
-            if fobj:
-                data = fobj.read()
-                md5 = hashlib.md5(data).hexdigest()
-                results.append({
-                    "path": member.name,
-                    "size": member.mode,
-                    "md5": md5
-                })
+        # data.tgz() 返回 TarFile 对象（不管是 gz、xz、bz2 都会解压）
+        tar = deb.data.tgz()
+
+        for member in tar.getmembers():
+            if member.isfile():
+                fobj = tar.extractfile(member)
+                if fobj:
+                    data = fobj.read()
+                    md5 = hashlib.md5(data).hexdigest()
+                    results.append({
+                        "path": member.name,
+                        "size": member.mode,
+                        "md5": md5
+                    })
+    except Exception as e:
+        raise ValueError(f"Failed to parse deb {file_path}: {e}")
 
     if len(results) > 0:
         package["files"] = results
         save_json(package, file_path + ".json")
     else:
         raise ValueError(f"No files found in {file_path}")
+
 
 def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2, cache=True):
     os.makedirs(out_dir, exist_ok=True)
@@ -183,8 +192,8 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
                 os.makedirs(save_dir, exist_ok=True)
                 save_path = os.path.join(save_dir, os.path.basename(index_packages_url))
                 download_file(url=index_packages_url, save=True,
-                                          save_path=save_path,
-                                          type_name=type_name, timeout=timeout)
+                              save_path=save_path,
+                              type_name=type_name, timeout=timeout)
                 if os.path.exists(save_path):
                     pkg_list = load_and_parse_packages(save_path, version, repo, arch)
                     if len(pkg_list) > 0:
@@ -202,7 +211,7 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
                 save_dir = os.path.normpath(os.path.join(out_dir, version, repo, arch))
                 os.makedirs(save_dir, exist_ok=True)
                 save_path = os.path.join(save_dir, os.path.basename(deb_url))
-                if cache and os.path.exists(save_path+".json"):
+                if cache and os.path.exists(save_path + ".json"):
                     logger.info(f"[{type_name}] Skipping {deb_url}")
                     continue
                 delay = random.randint(0, randint)
@@ -215,4 +224,3 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
         except Exception as e:
             logger.error(f"[{type_name}] Failed to process packages file {index_packages_url}: {e}")
             continue
-

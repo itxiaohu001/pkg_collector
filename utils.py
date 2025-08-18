@@ -110,6 +110,9 @@ def download_file(
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     last_error = None
 
+    if os.path.exists(save_path):
+        os.remove(save_path)
+
     for attempt in range(1, max_retries + 1):
         try:
             # 发送请求（禁用SSL验证需谨慎）
@@ -134,7 +137,7 @@ def download_file(
                 callback(save_path, additional)
 
             # 非保存模式删除文件
-            if not save:
+            if not save and os.path.exists(save_path):
                 os.remove(save_path)
                 logger.info(f"[{type_name}] Deleted {save_path}")
 
