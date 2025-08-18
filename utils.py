@@ -98,8 +98,7 @@ class FileDownloadError(Exception):
 
 def download_file(
         url,
-        save_dir="./",
-        cache=True,
+        save_path,
         save=False,
         callback=None,
         type_name="",
@@ -108,14 +107,7 @@ def download_file(
         max_retries: int = 3,
         retry_delay: float = 5.0,
 ):
-    file_path = os.path.normpath(os.path.join(save_dir, os.path.basename(url)))
-    os.makedirs(save_dir, exist_ok=True)
     last_error = None
-
-    # 检查缓存
-    if os.path.exists(f'{file_path}.json') and cache:
-        logger.info(f"[{type_name}] Skipped {url} (cached)")
-        return ""
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -128,20 +120,20 @@ def download_file(
             r.raise_for_status()  # 检查HTTP状态码
 
             # 保存文件
-            with open(file_path, "wb") as f:
+            with open(save_path, "wb") as f:
                 f.write(r.content)
             logger.info(f"[{type_name}] Downloaded {url}")
 
             # 回调处理
             if callback:
-                callback(file_path, additional)
+                callback(save_path, additional)
 
             # 非保存模式删除文件
             if not save:
-                os.remove(file_path)
-                logger.info(f"[{type_name}] Deleted {file_path}")
+                os.remove(save_path)
+                logger.info(f"[{type_name}] Deleted {save_path}")
 
-            return file_path
+            return save_path
 
         except requests.exceptions.RequestException as e:
             last_error = e
@@ -157,11 +149,11 @@ def download_file(
 
         finally:
             # 失败时清理临时文件
-            if last_error and os.path.exists(file_path):
-                os.remove(file_path)
+            if last_error and os.path.exists(save_path):
+                os.remove(save_path)
 
     # 重试全部失败后抛出自定义异常
-    raise FileDownloadError(url, max_retries, last_error, file_path)
+    raise FileDownloadError(url, max_retries, last_error, save_path)
 
 
 def save_json(data, name):

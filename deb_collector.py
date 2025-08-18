@@ -176,33 +176,38 @@ def collect_deb(base_url, out_dir, type_name, timeout=60, save=False, randint=2,
             if cache and os.path.exists(json_cache):
                 pkg_list = load_json(json_cache)
             else:
-                file_dist = download_file(url=index_packages_url, save=True,
-                                          save_dir=os.path.join(out_dir, version, repo, arch),
+                save_dir = os.path.normpath(os.path.join(out_dir, version, repo, arch))
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, os.path.basename(index_packages_url))
+                download_file(url=index_packages_url, save=True,
+                                          save_path=save_path,
                                           type_name=type_name, timeout=60)
-                if file_dist:
-                    pkg_list = load_and_parse_packages(file_dist, version, repo, arch)
-                    os.remove(file_dist)
-            if len(pkg_list) > 0:
-                save_json(pkg_list, json_cache)
-                for package in pkg_list:
-                    if not package:
-                        continue
-                    additional = {"package":package}
-                    deb_rel_path = package.get(packages_rel_path_key)
-                    if not version or not repo or not arch or not deb_rel_path:
-                        logger.warn(f"[{type_name}] Invalid package info: {package}")
-                        continue
-                    deb_url = urljoin(base_url, deb_rel_path)
-                    save_dir = os.path.join(out_dir, version, repo, arch)
-                    try:
-                        delay = random.randint(0, randint)
-                        time.sleep(delay)
-                        download_file(deb_url, save_dir, save=save, callback=_parse_deb, type_name=type_name,
-                                      timeout=timeout,additional=additional)
-                    except Exception as e:
-                        logger.error(f"[{type_name}] Failed to process {deb_url}: {e}")
-            else:
-                logger.warn(f"[{type_name}] No packages found in {index_packages_url}")
+                if os.path.exists(save_path):
+                    pkg_list = load_and_parse_packages(save_path, version, repo, arch)
+                    if len(pkg_list) > 0:
+                        save_json(pkg_list, json_cache)
+                    os.remove(save_path)
+            for package in pkg_list:
+                if not package:
+                    continue
+                additional = {"package": package}
+                deb_rel_path = package.get(packages_rel_path_key)
+                if not version or not repo or not arch or not deb_rel_path:
+                    logger.warn(f"[{type_name}] Invalid package info: {package}")
+                    continue
+                deb_url = urljoin(base_url, deb_rel_path)
+                save_dir = os.path.normpath(os.path.join(out_dir, version, repo, arch))
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, os.path.basename(deb_url))
+                if cache and os.path.exists(save_path):
+                    continue
+                delay = random.randint(0, randint)
+                time.sleep(delay)
+                try:
+                    download_file(deb_url, save_path=save_path, save=save, callback=_parse_deb, type_name=type_name,
+                                  timeout=timeout, additional=additional)
+                except Exception as e:
+                    logger.error(f"[{type_name}] Failed to process {deb_url}: {e}")
         except Exception as e:
             logger.error(f"[{type_name}] Failed to process packages file {index_packages_url}: {e}")
             continue

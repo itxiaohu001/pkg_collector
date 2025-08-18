@@ -21,12 +21,17 @@ def _process_arch_dir(arch_url, version, repo, arch, output_dir, save=False, ran
     additional = {os_dir_version_key: version, os_dir_repo_key: repo, os_dir_arch_key: arch}
 
     for apk in apk_files:
+        url = urljoin(arch_url, apk)
+        save_dir = os.path.normpath(os.path.join(output_dir, version, repo, arch))
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, apk)
+        if cache and os.path.exists(save_path):
+            continue
+        delay = random.randint(0, randint)
+        time.sleep(delay)
         try:
-            delay = random.randint(0, randint)
-            time.sleep(delay)
-            download_file(url=urljoin(arch_url, apk), save_dir=os.path.join(output_dir, version, repo, arch),
-                          save=save, callback=_process_apk_file, type_name=type_name, additional=additional,
-                          cache=cache)
+            download_file(url=url, save_path=save_path,
+                          save=save, callback=_process_apk_file, type_name=type_name, additional=additional)
         except Exception as e:
             logger.error(f"[{type_name}] Failed to download {apk}: {e}")
 
