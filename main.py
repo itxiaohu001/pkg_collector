@@ -1,6 +1,7 @@
 from alpine_collector import collect_alpine
 from deb_collector import collect_deb
 from rpm_collector import collect_rpm
+from freebsd import collect_freebsd
 import argparse
 import os
 
@@ -37,7 +38,7 @@ if __name__ == "__main__":
 
     # 解析收集类型
     if collect_types_str == 'all':
-        collect_types = ['alpine', 'debian', 'ubuntu', 'centos']
+        collect_types = ['alpine', 'debian', 'ubuntu', 'centos','freebsd']
     else:
         collect_types = [t.strip() for t in collect_types_str.split(',')]
 
@@ -50,6 +51,7 @@ if __name__ == "__main__":
     debian_dir = os.path.join(download_dir, "debian")
     ubuntu_dir = os.path.join(download_dir, "ubuntu")
     centos_dir = os.path.join(download_dir, "centos")
+    freebsd_dir = os.path.join(download_dir,"freebsd")
 
     # 根据指定的类型进行爬取
     # if 'alpine' in collect_types:
@@ -74,3 +76,9 @@ if __name__ == "__main__":
             os.makedirs(centos_dir)
         collect_rpm(output_dir=centos_dir, base_url="https://mirrors.aliyun.com/centos/", type_name="Centos",
                     timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
+
+    if 'freebsd' in collect_types:
+        if not os.path.exists(freebsd_dir):
+            os.makedirs(freebsd_dir)
+        collect_freebsd(output_dir=freebsd_dir,base_url="https://pkg.freebsd.org/", type_name="FreeBSD",
+                        timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
