@@ -81,4 +81,4 @@ if __name__ == "__main__":
         if not os.path.exists(freebsd_dir):
             os.makedirs(freebsd_dir)
         collect_freebsd(output_dir=freebsd_dir,base_url="https://pkg.freebsd.org/", type_name="FreeBSD",
-                        timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
+                        timeout=http_timeout,  cache=cache)
