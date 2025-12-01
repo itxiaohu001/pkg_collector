@@ -1,18 +1,36 @@
-from alpine_collector import collect_alpine
-from deb_collector import collect_deb
-from rpm_collector import collect_rpm
-from freebsd import collect_freebsd
 import argparse
 import os
+import multiprocessing  # 导入多进程模块
+import time  # 导入time用于计时
+
+# 假设这些是您的爬取函数
+from deb_collector import collect_deb
+from freebsd import collect_freebsd
+from rpm_collector import collect_rpm
+
+
+# from alpine_collector import collect_alpine # 假设有一个collect_alpine函数
+
+# --- 任务执行函数 ---
+# 包装所有爬取逻辑，以便传递给进程
+def run_collection_task(task_name, func, **kwargs):
+    """
+    一个包装函数，用于在进程中执行爬取任务，并处理可能的错误。
+    """
+    print(f"[{task_name}] 任务开始...")
+    try:
+        func(**kwargs)
+        print(f"[{task_name}] 任务成功完成。")
+    except Exception as e:
+        print(f"[{task_name}] 任务失败: {e}")
+
 
 if __name__ == "__main__":
+    start_time = time.time()  # 记录开始时间
+
     """
     Package collector - 用于收集各种Linux发行版的软件包信息
-    
-    简单使用示例:
-    python main.py --types all                    # 收集所有类型
-    python main.py --types alpine,debian          # 只收集alpine和debian
-    python main.py --dir mydownloads --timeout 120 # 指定下载目录和超时时间
+    ... (参数解析部分不变)
     """
     parser = argparse.ArgumentParser(description='Package collector - 用于收集各种Linux发行版的软件包信息')
     parser.add_argument('--save', action='store_true', default=False,
@@ -27,6 +45,8 @@ if __name__ == "__main__":
                         help='要收集的类型，用逗号分隔或使用all (默认: all)')
     parser.add_argument('--cache', action='store_true', default=True,
                         help='是否使用缓存 (默认: True)')
+    parser.add_argument('--process', type=int, default=4,
+                        help='最大并行进程数 (默认: 4)')  # 新增并行数参数
 
     args = parser.parse_args()
     source_file_save = args.save
@@ -35,10 +55,11 @@ if __name__ == "__main__":
     download_dir = args.dir
     collect_types_str = args.types.lower()
     cache = args.cache
+    max_processes = args.process
 
     # 解析收集类型
     if collect_types_str == 'all':
-        collect_types = ['alpine', 'debian', 'ubuntu', 'centos','freebsd']
+        collect_types = ['debian', 'ubuntu', 'centos', 'freebsd']
     else:
         collect_types = [t.strip() for t in collect_types_str.split(',')]
 
@@ -46,39 +67,102 @@ if __name__ == "__main__":
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
 
-    # 为每种类型创建子目录
-    alpine_dir = os.path.join(download_dir, "alpine")
-    debian_dir = os.path.join(download_dir, "debian")
-    ubuntu_dir = os.path.join(download_dir, "ubuntu")
-    centos_dir = os.path.join(download_dir, "centos")
-    freebsd_dir = os.path.join(download_dir,"freebsd")
+    # 1. 定义所有可能的任务及其参数
+    tasks = []
 
-    # 根据指定的类型进行爬取
-    # if 'alpine' in collect_types:
-    #     if not os.path.exists(alpine_dir):
-    #         os.makedirs(alpine_dir)
-    #     collect_alpine(output_dir=alpine_dir, save=source_file_save, randint=randint, cache=cache)
+    # 准备任务参数
+    task_config = {
+        'debian': {
+            'func': collect_deb,
+            'kwargs': {
+                "base_url": "https://mirrors.aliyun.com/debian/",
+                "out_dir": os.path.join(download_dir, "debian"),
+                "type_name": "Debian",
+                "timeout": http_timeout,
+                "save": source_file_save,
+                "randint": randint,
+                "cache": cache
+            }
+        },
+        'ubuntu': {
+            'func': collect_deb,
+            'kwargs': {
+                "base_url": "https://mirrors.aliyun.com/ubuntu/",
+                "out_dir": os.path.join(download_dir, "ubuntu"),
+                "type_name": "Ubuntu",
+                "timeout": http_timeout,
+                "save": source_file_save,
+                "randint": randint,
+                "cache": cache
+            }
+        },
+        'centos': {
+            'func': collect_rpm,
+            'kwargs': {
+                "output_dir": os.path.join(download_dir, "centos"),
+                "base_url": "https://mirrors.aliyun.com/centos/",
+                "type_name": "Centos",
+                "timeout": http_timeout,
+                "save": source_file_save,
+                "randint": randint,
+                "cache": cache
+            }
+        },
+        'freebsd': {
+            'func': collect_freebsd,
+            'kwargs': {
+                "output_dir": os.path.join(download_dir, "freebsd"),
+                "base_url": "https://pkg.freebsd.org/",
+                "type_name": "FreeBSD",
+                "timeout": http_timeout,
+                "cache": cache
+                # 注意 freebsd 任务没有 save 和 randint 参数
+            }
+        },
+        # 'alpine': { ... } # 如果要加入alpine，在这里配置
+    }
 
-    if 'debian' in collect_types:
-        if not os.path.exists(debian_dir):
-            os.makedirs(debian_dir)
-        collect_deb(base_url="https://mirrors.aliyun.com/debian/", out_dir=debian_dir, type_name="Debian",
-                    timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
+    # 2. 筛选需要执行的任务，并创建对应的目录
+    for type_name in collect_types:
+        if type_name in task_config:
+            config = task_config[type_name]
+            task_dir = config['kwargs'].get('out_dir') or config['kwargs'].get('output_dir')
 
-    if 'ubuntu' in collect_types:
-        if not os.path.exists(ubuntu_dir):
-            os.makedirs(ubuntu_dir)
-        collect_deb(base_url="https://mirrors.aliyun.com/ubuntu/", out_dir=ubuntu_dir, type_name="Ubuntu",
-                    timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
+            # 创建子目录
+            if task_dir and not os.path.exists(task_dir):
+                os.makedirs(task_dir)
 
-    if 'centos' in collect_types:
-        if not os.path.exists(centos_dir):
-            os.makedirs(centos_dir)
-        collect_rpm(output_dir=centos_dir, base_url="https://mirrors.aliyun.com/centos/", type_name="Centos",
-                    timeout=http_timeout, save=source_file_save, randint=randint, cache=cache)
+            # 将任务添加到列表
+            tasks.append({
+                'name': type_name.capitalize(),
+                'func': config['func'],
+                'kwargs': config['kwargs']
+            })
 
-    if 'freebsd' in collect_types:
-        if not os.path.exists(freebsd_dir):
-            os.makedirs(freebsd_dir)
-        collect_freebsd(output_dir=freebsd_dir,base_url="https://pkg.freebsd.org/", type_name="FreeBSD",
-                        timeout=http_timeout,  cache=cache)
+    if not tasks:
+        print("没有指定有效的收集类型，程序退出。")
+        exit()
+
+    # 3. 使用进程池或手动创建进程进行并行
+    print(f"--- 准备启动 {len(tasks)} 个并行爬取任务 ---")
+
+    # 采用简单的手动创建进程方式
+    processes = []
+
+    for task in tasks:
+        # 创建进程，target指向包装函数，args传递任务名称和函数，kwargs作为关键字参数
+        p = multiprocessing.Process(
+            target=run_collection_task,
+            args=(task['name'], task['func']),
+            kwargs=task['kwargs']
+        )
+        processes.append(p)
+        p.start()
+
+    # 4. 等待所有进程完成
+    for p in processes:
+        p.join()
+
+    end_time = time.time()
+    print("--- 所有爬取任务完成 ---")
+    print(f"总耗时: {end_time - start_time:.2f} 秒")
