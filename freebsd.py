@@ -189,8 +189,11 @@ def collect_freebsd(
 
                 pkg_url = f"{base_url}/{pkg_set}/latest/{repopath}"
                 pkg["file_hashes"] = get_pkg_file_hashes(pkg_url, timeout)
-                save_json(pkg, save_path)
-                logger.info(f"[{type_name}] 保存: {save_path}")
+                if pkg["file_hashes"]:
+                    save_json(pkg, save_path)
+                    logger.info(f"[{type_name}] 保存: {save_path}")
+                else:
+                    logger.info(f"[{type_name}] 无文件列表信息: {pkg_url}")
 
 
 # ===========================

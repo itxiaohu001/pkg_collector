@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger("crawl")
 logger.setLevel(logging.INFO)
 handler = RotatingFileHandler(
-    filename="craw.log",  # 基础日志文件名
+    filename="crawl.log",  # 基础日志文件名
     maxBytes=10 * 1024 * 1024,  # 每个日志文件最大 10MB
     backupCount=10  # 保留最多 10 个备份文件
 )
