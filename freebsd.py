@@ -29,15 +29,18 @@ PKG_SETS = [
 # ===========================
 
 def download_file(session, url: str, dest_path: str, timeout: int) -> bool:
-    """下载文件到指定路径"""
+    """下载文件到指定路径，针对 404 进行降级处理"""
     try:
         response = session.get(url, stream=True, timeout=timeout)
+        if response.status_code == 404:
+            logger.warning(f"文件已失效 (404): {url}")
+            return False
         if response.status_code != 200:
             logger.error(f"下载失败: {url} [{response.status_code}]")
             return False
 
         with open(dest_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=16384):
                 if chunk:
                     f.write(chunk)
         return True
@@ -55,12 +58,12 @@ def smart_extract(file_path: str, extract_dir: str) -> bool:
             with open(file_path, "rb") as fh:
                 dctx = zstd.ZstdDecompressor()
                 with dctx.stream_reader(fh) as reader:
+                    # 注意：元数据解压我们依然可以使用流模式，因为 extractall 是一次性顺序操作
                     with tarfile.open(fileobj=reader, mode="r|") as tar:
                         tar.extractall(extract_dir)
             return True
         except Exception:
             # 如果 Zstd 失败，回退到标准 tarfile (处理 XZ/Gzip 等)
-            # mode="r:*" 会自动探测格式
             with tarfile.open(file_path, "r:*") as tar:
                 tar.extractall(extract_dir)
             return True
@@ -71,7 +74,6 @@ def smart_extract(file_path: str, extract_dir: str) -> bool:
 def parse_packagesite_file(extract_dir: str) -> list:
     """解析 FreeBSD packagesite 文件"""
     packages = []
-    # 兼容两种可能的内部文件名
     target_file = None
     for name in ["packagesite.yaml", "packagesite"]:
         p = os.path.join(extract_dir, name)
@@ -101,40 +103,35 @@ def get_pkg_file_hashes(session, pkg_url: str, timeout: int) -> list | None:
 
         file_hashes = []
         try:
-            # 对于 .pkg，我们也需要应用 smart_extract 类似的逻辑
-            # 这里为了读取内容不解压到磁盘，直接内存操作
+            # 探测是否为 Zstd 压缩
             is_zstd = False
             with open(pkg_path, 'rb') as f:
                 if f.read(4) == b'\x28\xb5\x2f\xfd': # Zstd Magic Number
                     is_zstd = True
 
+            # --- 核心修复：预解压到临时 tar 文件以支持 Seeking ---
+            work_tar = os.path.join(tmpdir, "work.tar")
+
             if is_zstd:
-                with open(pkg_path, "rb") as fh:
+                with open(pkg_path, "rb") as fh, open(work_tar, "wb") as wh:
                     dctx = zstd.ZstdDecompressor()
-                    with dctx.stream_reader(fh) as reader:
-                        with tarfile.open(fileobj=reader, mode="r|") as tar:
-                            for member in tar.getmembers():
-                                if member.isfile():
-                                    f_obj = tar.extractfile(member)
-                                    if f_obj:
-                                        data = f_obj.read()
-                                        file_hashes.append({
-                                            "path": member.name,
-                                            "md5": hashlib.md5(data).hexdigest(),
-                                            "sha256": hashlib.sha256(data).hexdigest(),
-                                        })
+                    dctx.copy_stream(fh, wh)
             else:
-                with tarfile.open(pkg_path, "r:*") as tar:
-                    for member in tar.getmembers():
-                        if member.isfile():
-                            f_obj = tar.extractfile(member)
-                            if f_obj:
-                                data = f_obj.read()
-                                file_hashes.append({
-                                    "path": member.name,
-                                    "md5": hashlib.md5(data).hexdigest(),
-                                    "sha256": hashlib.sha256(data).hexdigest(),
-                                })
+                # 如果是 XZ 等其他格式，tarfile 的 "r:*" 模式在打开磁盘文件时支持回溯
+                work_tar = pkg_path
+
+            # 使用标准 "r" 模式打开本地文件，支持 getmembers() 后再次 extractfile()
+            with tarfile.open(work_tar, "r:*") as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        f_obj = tar.extractfile(member)
+                        if f_obj:
+                            data = f_obj.read()
+                            file_hashes.append({
+                                "path": member.name,
+                                "md5": hashlib.md5(data).hexdigest(),
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                            })
             return file_hashes
         except Exception as e:
             logger.error(f"解析 pkg 文件失败: {pkg_url} - {e}")
@@ -151,7 +148,7 @@ def collect_freebsd(
         timeout: int = DEFAULT_TIMEOUT,
         cache: bool = True
 ):
-    session = requests.Session() # 使用 Session 复用连接
+    session = requests.Session()
 
     for pkg_set in PKG_SETS:
         safe_pkg = pkg_set.replace(":", "_")
@@ -172,12 +169,10 @@ def collect_freebsd(
             extract_dir = os.path.join(output_dir, safe_pkg, release.strip("/"))
             os.makedirs(extract_dir, exist_ok=True)
 
-            # --- 核心逻辑改进：多文件探测避免 404 ---
             metadata_downloaded = False
             for meta_filename in METADATA_FILES:
                 meta_url = f"{set_url}/{release}{meta_filename}"
 
-                # 先发 HEAD 请求检查文件是否存在
                 try:
                     check = session.head(meta_url, timeout=10)
                     if check.status_code != 200:
@@ -191,15 +186,13 @@ def collect_freebsd(
                     if download_file(session, meta_url, temp_file, timeout):
                         if smart_extract(temp_file, extract_dir):
                             metadata_downloaded = True
-                            break # 成功获取一个，跳过后续后缀
+                            break
 
             if not metadata_downloaded:
-                logger.error(f"[{type_name}] 无法找到有效的 packagesite 文件: {set_url}/{release}")
                 continue
 
-            # 解析解析
             packages = parse_packagesite_file(extract_dir)
-            logger.info(f"[{type_name}] 解析完成，共 {len(packages)} 个包")
+            logger.info(f"[{type_name}] {pkg_set}/{release} 解析完成，共 {len(packages)} 个包")
 
             for pkg in packages:
                 name, version, repopath = pkg.get("name"), pkg.get("version"), pkg.get("repopath")
@@ -208,16 +201,19 @@ def collect_freebsd(
 
                 safe_name = name.replace("/", "_").replace("\\", "_")
                 safe_version = version.replace("/", "_").replace("\\", "_")
-                save_path = f"{extract_dir}/{safe_name}_{safe_version}.json"
+                save_path = os.path.join(extract_dir, f"{safe_name}_{safe_version}.json")
 
                 if cache and os.path.exists(save_path):
                     continue
 
                 pkg_url = f"{set_url}/{release}{repopath}"
+                # 此处会进入修复后的 get_pkg_file_hashes
                 pkg["file_hashes"] = get_pkg_file_hashes(session, pkg_url, timeout)
+
+                # 只有成功获取到文件列表才保存，避免产生空数据 JSON
                 if pkg["file_hashes"]:
                     save_json(pkg, save_path)
-                    logger.info(f"[{type_name}] 保存: {save_path}")
+                    logger.info(f"[{type_name}] 已处理: {name}-{version}")
 
 if __name__ == "__main__":
     collect_freebsd()
