@@ -14,7 +14,6 @@ from utils import logger, save_json
 BASE_URL = "https://pkg.freebsd.org"
 DEFAULT_OUTPUT = "downloads/freebsd"
 DEFAULT_TIMEOUT = 60
-# 优先级探测列表
 METADATA_FILES = ["packagesite.tzst", "packagesite.pkg", "packagesite.txz"]
 
 PKG_SETS = [
@@ -29,15 +28,19 @@ PKG_SETS = [
 # ===========================
 
 def download_file(session, url: str, dest_path: str, timeout: int) -> bool:
-    """下载文件到指定路径"""
+    """下载文件到指定路径，针对 404 进行优化处理"""
     try:
         response = session.get(url, stream=True, timeout=timeout)
+        if response.status_code == 404:
+            # 镜像站包更新极快，404 通常意味着该版本的包已被新版本替换
+            logger.warning(f"包已失效 (404): {url}")
+            return False
         if response.status_code != 200:
             logger.error(f"下载失败: {url} [{response.status_code}]")
             return False
 
         with open(dest_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=16384):
                 if chunk:
                     f.write(chunk)
         return True
@@ -46,11 +49,9 @@ def download_file(session, url: str, dest_path: str, timeout: int) -> bool:
         return False
 
 def smart_extract(file_path: str, extract_dir: str) -> bool:
-    """
-    智能解压：兼容 Zstd (.tzst / .pkg) 和 XZ (.txz / .pkg)
-    """
+    """智能解压元数据文件"""
     try:
-        # 尝试使用 Zstd 解压流
+        # 尝试 Zstd 解压
         try:
             with open(file_path, "rb") as fh:
                 dctx = zstd.ZstdDecompressor()
@@ -59,8 +60,7 @@ def smart_extract(file_path: str, extract_dir: str) -> bool:
                         tar.extractall(extract_dir)
             return True
         except Exception:
-            # 如果 Zstd 失败，回退到标准 tarfile (处理 XZ/Gzip 等)
-            # mode="r:*" 会自动探测格式
+            # 回退到标准模式
             with tarfile.open(file_path, "r:*") as tar:
                 tar.extractall(extract_dir)
             return True
@@ -68,32 +68,8 @@ def smart_extract(file_path: str, extract_dir: str) -> bool:
         logger.error(f"解压失败 {file_path}: {e}")
         return False
 
-def parse_packagesite_file(extract_dir: str) -> list:
-    """解析 FreeBSD packagesite 文件"""
-    packages = []
-    # 兼容两种可能的内部文件名
-    target_file = None
-    for name in ["packagesite.yaml", "packagesite"]:
-        p = os.path.join(extract_dir, name)
-        if os.path.exists(p):
-            target_file = p
-            break
-
-    if not target_file:
-        return []
-
-    with open(target_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line: continue
-            try:
-                packages.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                logger.warning(f"JSON解析错误: {e}")
-    return packages
-
 def get_pkg_file_hashes(session, pkg_url: str, timeout: int) -> list | None:
-    """下载 .pkg 文件并计算其中文件的哈希"""
+    """下载并计算 .pkg 内部文件哈希，解决流模式不可回溯问题"""
     with tempfile.TemporaryDirectory() as tmpdir:
         pkg_path = os.path.join(tmpdir, "pkg.pkg")
         if not download_file(session, pkg_url, pkg_path, timeout):
@@ -101,123 +77,118 @@ def get_pkg_file_hashes(session, pkg_url: str, timeout: int) -> list | None:
 
         file_hashes = []
         try:
-            # 对于 .pkg，我们也需要应用 smart_extract 类似的逻辑
-            # 这里为了读取内容不解压到磁盘，直接内存操作
+            # 1. 探测是否为 Zstd 压缩
             is_zstd = False
             with open(pkg_path, 'rb') as f:
-                if f.read(4) == b'\x28\xb5\x2f\xfd': # Zstd Magic Number
+                if f.read(4) == b'\x28\xb5\x2f\xfd':
                     is_zstd = True
 
+            # 2. 预解压处理：将压缩包转换为标准的本地 tar 文件
+            # 这样 tarfile 就可以进行随机访问（Seek），避免 "seeking backwards" 错误
+            temp_tar_path = os.path.join(tmpdir, "work.tar")
+
             if is_zstd:
-                with open(pkg_path, "rb") as fh:
-                    dctx = zstd.ZstdDecompressor()
-                    with dctx.stream_reader(fh) as reader:
-                        with tarfile.open(fileobj=reader, mode="r|") as tar:
-                            for member in tar.getmembers():
-                                if member.isfile():
-                                    f_obj = tar.extractfile(member)
-                                    if f_obj:
-                                        data = f_obj.read()
-                                        file_hashes.append({
-                                            "path": member.name,
-                                            "md5": hashlib.md5(data).hexdigest(),
-                                            "sha256": hashlib.sha256(data).hexdigest(),
-                                        })
+                with open(pkg_path, "rb") as comp, open(temp_tar_path, "wb") as decomp:
+                    zstd.ZstdDecompressor().copy_stream(comp, decomp)
             else:
-                with tarfile.open(pkg_path, "r:*") as tar:
-                    for member in tar.getmembers():
-                        if member.isfile():
-                            f_obj = tar.extractfile(member)
-                            if f_obj:
-                                data = f_obj.read()
-                                file_hashes.append({
-                                    "path": member.name,
-                                    "md5": hashlib.md5(data).hexdigest(),
-                                    "sha256": hashlib.sha256(data).hexdigest(),
-                                })
+                # 如果是 XZ/GZ，tarfile 的 "r:*" 模式在打开本地文件时支持 seek
+                temp_tar_path = pkg_path
+
+            # 3. 使用标准模式读取
+            with tarfile.open(temp_tar_path, "r:*") as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        f_obj = tar.extractfile(member)
+                        if f_obj:
+                            data = f_obj.read()
+                            file_hashes.append({
+                                "path": member.name,
+                                "md5": hashlib.md5(data).hexdigest(),
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                            })
             return file_hashes
         except Exception as e:
-            logger.error(f"解析 pkg 文件失败: {pkg_url} - {e}")
+            logger.error(f"解析 pkg 内部文件失败: {pkg_url} - {e}")
             return None
+
+def parse_packagesite_file(extract_dir: str) -> list:
+    """解析元数据 JSON"""
+    for name in ["packagesite.yaml", "packagesite"]:
+        p = os.path.join(extract_dir, name)
+        if os.path.exists(p):
+            packages = []
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            packages.append(json.loads(line))
+                        except: continue
+            return packages
+    return []
 
 # ===========================
 # 主流程
 # ===========================
 
-def collect_freebsd(
-        output_dir: str = DEFAULT_OUTPUT,
-        base_url: str = BASE_URL,
-        type_name: str = "FreeBSD",
-        timeout: int = DEFAULT_TIMEOUT,
-        cache: bool = True
-):
-    session = requests.Session() # 使用 Session 复用连接
+def collect_freebsd(output_dir=DEFAULT_OUTPUT, cache=True):
+    session = requests.Session()
 
     for pkg_set in PKG_SETS:
         safe_pkg = pkg_set.replace(":", "_")
-        set_url = f"{base_url}/{pkg_set}"
+        set_url = f"{BASE_URL}/{pkg_set}"
 
-        releases = []
         try:
             resp = session.get(set_url, timeout=10)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.content, "html.parser")
-            releases = [a["href"].strip() for a in soup.find_all("a", href=True)
-                        if a["href"].strip() and a["href"] != "../" and a["href"].endswith("/")]
+            releases = [a["href"] for a in soup.find_all("a", href=True)
+                        if a["href"] != "../" and a["href"].endswith("/")]
         except Exception as e:
-            logger.error(f"无法访问目录 {set_url}: {e}")
+            logger.error(f"无法获取 Release 列表 {set_url}: {e}")
             continue
 
-        for release in releases:
-            extract_dir = os.path.join(output_dir, safe_pkg, release.strip("/"))
+        for rel in releases:
+            extract_dir = os.path.join(output_dir, safe_pkg, rel.strip("/"))
             os.makedirs(extract_dir, exist_ok=True)
 
-            # --- 核心逻辑改进：多文件探测避免 404 ---
-            metadata_downloaded = False
-            for meta_filename in METADATA_FILES:
-                meta_url = f"{set_url}/{release}{meta_filename}"
+            # 探测元数据
+            metadata_found = False
+            for ext_file in METADATA_FILES:
+                meta_url = f"{set_url}/{rel}{ext_file}"
 
-                # 先发 HEAD 请求检查文件是否存在
                 try:
-                    check = session.head(meta_url, timeout=10)
-                    if check.status_code != 200:
-                        continue
-                except:
-                    continue
+                    if session.head(meta_url, timeout=10).status_code == 200:
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            tmp_p = os.path.join(tmpdir, "meta")
+                            if download_file(session, meta_url, tmp_p, DEFAULT_TIMEOUT):
+                                if smart_extract(tmp_p, extract_dir):
+                                    metadata_found = True
+                                    break
+                except: continue
 
-                logger.info(f"[{type_name}] 正在尝试获取元数据: {meta_url}")
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    temp_file = os.path.join(tmpdir, meta_filename)
-                    if download_file(session, meta_url, temp_file, timeout):
-                        if smart_extract(temp_file, extract_dir):
-                            metadata_downloaded = True
-                            break # 成功获取一个，跳过后续后缀
-
-            if not metadata_downloaded:
-                logger.error(f"[{type_name}] 无法找到有效的 packagesite 文件: {set_url}/{release}")
+            if not metadata_found:
                 continue
 
-            # 解析解析
             packages = parse_packagesite_file(extract_dir)
-            logger.info(f"[{type_name}] 解析完成，共 {len(packages)} 个包")
+            logger.info(f"开始处理 {pkg_set}/{rel}, 共 {len(packages)} 个包")
 
             for pkg in packages:
                 name, version, repopath = pkg.get("name"), pkg.get("version"), pkg.get("repopath")
-                if not all([name, version, repopath]):
-                    continue
+                if not all([name, version, repopath]): continue
 
-                safe_name = name.replace("/", "_").replace("\\", "_")
-                safe_version = version.replace("/", "_").replace("\\", "_")
-                save_path = f"{extract_dir}/{safe_name}_{safe_version}.json"
+                safe_name = name.replace("/", "_")
+                save_path = os.path.join(extract_dir, f"{safe_name}_{version}.json")
 
                 if cache and os.path.exists(save_path):
                     continue
 
-                pkg_url = f"{set_url}/{release}{repopath}"
-                pkg["file_hashes"] = get_pkg_file_hashes(session, pkg_url, timeout)
-                if pkg["file_hashes"]:
+                pkg_url = f"{set_url}/{rel}{repopath}"
+                hashes = get_pkg_file_hashes(session, pkg_url, DEFAULT_TIMEOUT)
+
+                if hashes:
+                    pkg["file_hashes"] = hashes
                     save_json(pkg, save_path)
-                    logger.info(f"[{type_name}] 保存: {save_path}")
+                    logger.info(f"保存成功: {name}-{version}")
 
 if __name__ == "__main__":
     collect_freebsd()
